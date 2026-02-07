@@ -1,0 +1,39 @@
+{
+  "models": {
+    "kimi-k2": {
+      "name": "Kimi K2",
+      "provider": "moonshot",
+      "pricing": {
+        "input": 0.0000006,
+        "output": 0.0000025,
+        "cached": 0.00000015
+      },
+      "currency": "USD",
+      "unit": "per_token"
+    },
+    "kimi-k2-thinking": {
+      "name": "Kimi K2 Thinking",
+      "provider": "moonshot",
+      "pricing": {
+        "input": 0.0000006,
+        "output": 0.0000025,
+        "cached": 0.00000015
+      },
+      "currency": "USD",
+      "unit": "per_token"
+    },
+    "kimi-k2.5": {
+      "name": "Kimi K2.5",
+      "provider": "moonshot",
+      "pricing": {
+        "input": 0.0000006,
+        "output": 0.0000030,
+        "cached": 0.00000015
+      },
+      "currency": "USD",
+      "unit": "per_token"
+    }
+  },
+  "updated": "2026-02-07",
+  "source": "https://platform.moonshot.ai/docs/pricing"
+}

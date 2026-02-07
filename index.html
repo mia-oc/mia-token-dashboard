@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Token Usage Dashboard</title>
+  <style>
+    /* Sci-fi cyberpunk theme with glass panels */
+    :root{
+      --bg: #0a0a0a;
+      --card: rgba(255,255,255,0.08);
+      --border: rgba(255,255,255,0.15);
+      --text: #e8f0f8;
+      --accent1:#00f0ff; /* cyan */
+      --accent2:#ff00ff; /* magenta */
+      --accent3:#00ff9d; /* electric green */
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{ margin:0; font-family: Inter, ui-sans-serif, system-ui; background: linear-gradient(135deg, #0b0b12 0%, #0a0a0f 60%), #000; color:var(--text); }
+    .container{ max-width:1200px; margin:40px auto; padding:0 20px; }
+    header{ display:flex; align-items:center; justify-content:space-between; padding:12px 0 24px; border-bottom:1px solid var(--border); }
+    .logo{ display:flex; align-items:center; gap:12px; }
+    .logo-flag{ width:26px; height:26px; border-radius:6px; background: conic-gradient(from 180deg at 50% 50%, #00f0ff, #ff00ff, #00ff9d); box-shadow:0 0 12px var(--accent2); }
+    h1{ font-size:1.25rem; margin:0 }
+    .grid{ display:grid; grid-template-columns:repeat(2, 1fr); gap:18px; }
+    @media (max-width: 1000px){ .grid{ grid-template-columns:1fr; } }
+    .panel{ background: var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; box-shadow: 0 20px 40px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.08); position:relative; overflow:hidden; }
+    .panel h2{ font-size:1rem; margin:0 0 8px 0; }
+    canvas{ width:100% !important; height:260px !important; }
+    .stat{ font-family: ui-monospace,SFMono-Regular,Monaco,Consolas; font-size: 2em; font-weight: 600; }
+    .glow{ text-shadow:0 0 12px rgba(0,255,255,.8); }
+    .stats-bar{ display:flex; gap:32px; align-items:center; }
+    .stat-item{ display:flex; flex-direction:column; align-items:flex-end; }
+    .stat-label{ font-size:0.75rem; color:rgba(255,255,255,0.6); text-transform:uppercase; letter-spacing:0.05em; }
+    .stat-value{ font-family: ui-monospace,SFMono-Regular,Monaco,Consolas; font-size:1.5em; font-weight:600; }
+    .stat-value.alltime{ color: #00f0ff; text-shadow:0 0 8px rgba(0,240,255,0.5); }
+    .stat-value.today{ color: #00ff9d; text-shadow:0 0 8px rgba(0,255,157,0.5); }
+    .stat-value.yesterday{ color: #ff00ff; text-shadow:0 0 8px rgba(255,0,255,0.5); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <div class="logo-flag" aria-label="logo"></div>
+        <h1>Token Usage Dashboard</h1>
+      </div>
+      <div class="stats-bar">
+        <div class="stat-item">
+          <span class="stat-label">All Time</span>
+          <span class="stat-value alltime" id="allTimeSpend">$0.00</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Today</span>
+          <span class="stat-value today" id="todaySpend">$0.00</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Yesterday</span>
+          <span class="stat-value yesterday" id="yesterdaySpend">$0.00</span>
+        </div>
+      </div>
+    </header>
+    <div class="grid">
+      <div class="panel">
+        <h2>Cost Trends by Date</h2>
+        <canvas id="historic"></canvas>
+      </div>
+      <div class="panel">
+        <h2>Provider Comparison</h2>
+        <canvas id="providerBreakdown"></canvas>
+      </div>
+      <div class="panel">
+        <h2>Model Usage Breakdown</h2>
+        <canvas id="modelUsage"></canvas>
+      </div>
+      <div class="panel">
+        <h2>Cost per Query</h2>
+        <canvas id="costPerQuery"></canvas>
+      </div>
+      <div class="panel" style="grid-column:1 / -1;">
+        <h2>Live Snapshot</h2>
+        <canvas id="liveSnapshot"></canvas>
+      </div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    // Global chart instances for clean teardown between refreshes
+    let historicChart, providerChart, modelChart, costChart, liveChart;
+    // Cache of last fetched data to avoid redundant network calls within a cycle
+    let lastFetchedData = null;
+
+    async function fetchData(){
+      try{
+        const res = await fetch('/data/token_usage.json');
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        const data = await res.json();
+        console.log('Fetched data:', data);
+        lastFetchedData = data;
+        return data;
+      }catch(e){ console.error('Failed to load data', e); return null; }
+    }
+
+    function destroyChart(ch){ if(ch){ try{ ch.destroy(); }catch(e){ console.error('Chart destroy error', e);} } }
+
+    function renderChartsFromData(data){
+      if(!data) return;
+      // Limit to last 30 days for performance
+      const dates = Object.keys(data).sort();
+      const dates30 = dates.slice(-30);
+      const latestDate = dates[dates.length-1];
+      const latestDay = data[latestDate] || {};
+
+      // Historic total per day
+      const totals = dates30.map(d => {
+        const day = data[d] || {};
+        const dayTotal = Object.values(day.costs || {}).reduce((a,c)=> a + (c.total||0), 0);
+        return dayTotal;
+      });
+
+      // Calculate stats for all time, today, yesterday
+      const allTimeTotal = dates.reduce((sum, d) => {
+        const day = data[d] || {};
+        return sum + Object.values(day.costs || {}).reduce((a,c) => a + (c.total||0), 0);
+      }, 0);
+      
+      const latestTotal = Object.values(latestDay.costs || {}).reduce((a,c)=> a + (c.total||0), 0);
+      
+      const yesterdayDate = dates.length > 1 ? dates[dates.length-2] : null;
+      const yesterdayDay = yesterdayDate ? data[yesterdayDate] : {};
+      const yesterdayTotal = yesterdayDate ? Object.values(yesterdayDay.costs || {}).reduce((a,c)=> a + (c.total||0), 0) : 0;
+      
+      document.getElementById('allTimeSpend').textContent = '$' + allTimeTotal.toFixed(2);
+      document.getElementById('todaySpend').textContent = '$' + latestTotal.toFixed(2);
+      document.getElementById('yesterdaySpend').textContent = '$' + yesterdayTotal.toFixed(2);
+
+      // Destroy old charts
+      destroyChart(historicChart);
+      destroyChart(providerChart);
+      destroyChart(modelChart);
+      destroyChart(costChart);
+      destroyChart(liveChart);
+
+      // Historic chart
+      historicChart = new Chart(document.getElementById('historic'), {
+        type: 'line',
+        data: {
+          labels: dates30,
+          datasets: [{ label: 'Total Spend', data: totals, borderColor: '#00f0ff', fill: false }]
+        },
+        options: { responsive: true, scales: { y: { beginAtZero: true } } }
+      });
+
+      // Provider breakdown - aggregate across ALL days (not just latest)
+      const providerTotals = {};
+      dates.forEach(d => {
+        const day = data[d] || {};
+        const costs = day.costs || {};
+        Object.entries(costs).forEach(([model, costData]) => {
+          providerTotals[model] = (providerTotals[model] || 0) + (costData.total || 0);
+        });
+      });
+      // Sort by spend (highest first) and take top 8
+      const sortedProviders = Object.entries(providerTotals)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8);
+      const providerLabels = sortedProviders.map(([k]) => k);
+      const providerValues = sortedProviders.map(([,v]) => v);
+      
+      providerChart = new Chart(document.getElementById('providerBreakdown'), {
+        type: 'doughnut',
+        data: { 
+          labels: providerLabels, 
+          datasets: [{ 
+            data: providerValues, 
+            backgroundColor: ['#00f0ff', '#ff00ff', '#00ff9d', '#f59e0b', '#f97316', '#8b5cf6', '#ec4899', '#3b82f6'] 
+          }] 
+        },
+        options: { 
+          responsive: true, 
+          maintainAspectRatio: false,
+          cutout: '60%',
+          plugins: {
+            title: {
+              display: true,
+              text: 'All-Time Spend by Model',
+              color: '#e8f0f8',
+              font: { size: 12 }
+            },
+            legend: { 
+              position: 'right',
+              labels: { 
+                color: '#e8f0f8',
+                font: { size: 10 },
+                boxWidth: 10
+              } 
+            }
+          }
+        }
+      });
+
+      // Model usage breakdown - aggregate tokens across ALL days
+      const modelTokenTotals = {};
+      dates.forEach(d => {
+        const day = data[d] || {};
+        const usage = day.usage || {};
+        Object.entries(usage).forEach(([model, usageData]) => {
+          const tokens = (usageData.input_tokens || 0) + (usageData.output_tokens || 0);
+          modelTokenTotals[model] = (modelTokenTotals[model] || 0) + tokens;
+        });
+      });
+      // Sort by tokens (highest first) and take top 8
+      const sortedModels = Object.entries(modelTokenTotals)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8);
+      const modelLabels = sortedModels.map(([k]) => k);
+      const modelData = sortedModels.map(([,v]) => v);
+      
+      modelChart = new Chart(document.getElementById('modelUsage'), {
+        type: 'bar',
+        data: { 
+          labels: modelLabels, 
+          datasets: [{ 
+            label: 'Total Tokens (All Time)', 
+            data: modelData, 
+            backgroundColor: '#3b82f6' 
+          }] 
+        },
+        options: { 
+          responsive: true, 
+          scales: { y: { beginAtZero: true } },
+          plugins: {
+            title: {
+              display: true,
+              text: 'All-Time Token Usage by Model',
+              color: '#e8f0f8',
+              font: { size: 12 }
+            }
+          }
+        }
+      });
+
+      // Cost per query trend (per day)
+      const perDay = dates30.map(d => {
+        const day = data[d];
+        const dayTotal = Object.values(day?.costs || {}).reduce((a,c)=> a + (c.total||0),0);
+        const dayReq = day?.summary?.requests || 0;
+        return dayReq ? (dayTotal / dayReq) : 0;
+      });
+      costChart = new Chart(document.getElementById('costPerQuery'), {
+        type: 'line',
+        data: { labels: dates30, datasets: [{ label: 'Cost per Query', data: perDay, borderColor: '#10b981', fill: false }] },
+        options: { responsive: true, scales: { y: { beginAtZero: true } } }
+      });
+
+      // Live snapshot (latest tokens as a simple pie/donut)
+      const totalTokens = latestDay?.summary?.tokens || 0;
+      liveChart = new Chart(document.getElementById('liveSnapshot'), {
+        type: 'doughnut',
+        data: { labels: ['Tokens'], datasets: [{ data: [totalTokens], backgroundColor: ['#00ff9d'] }] },
+        options: { responsive: true, plugins: { legend: { display: false } } }
+      });
+    }
+
+    (async () => {
+      const data = await fetchData();
+      renderChartsFromData(data);
+      // Schedule periodic refreshs, reusing the same data fetch to avoid multiple calls per cycle
+      setInterval(async () => {
+        const d = await fetchData();
+        renderChartsFromData(d);
+      }, 60000);
+    })();
+  </script>
+</body>
+</html>
